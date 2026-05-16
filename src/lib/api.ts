@@ -1,4 +1,4 @@
-const API_HOST = "https://kings-adapters-fate-feeling.trycloudflare.com";
+const API_HOST = "https://lcdkhoa-bio-rag-be.hf.space";
 
 export interface ChatResponse {
   answer: string;
