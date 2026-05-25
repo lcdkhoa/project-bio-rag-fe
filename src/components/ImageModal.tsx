@@ -7,17 +7,18 @@ import Image from "next/image";
 
 const formatImagePath = (originalPath: string) => {
   if (!originalPath) return "";
-  const parts = originalPath.split('/database/images/');
+  const normalizedPath = originalPath.replace(/\\/g, "/");
+  const parts = normalizedPath.split("/database/images/");
   if (parts.length > 1) {
     return `/images/${parts[1]}`;
   }
-  return originalPath;
+  return normalizedPath;
 };
 
 export interface ImageData {
   image_path: string;
   label?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 interface ImageModalProps {
@@ -80,6 +81,7 @@ export default function ImageModal({ isOpen, onClose, image }: ImageModalProps) 
                   src={formatImagePath(image.image_path)}
                   alt={image.label || "RAG output image"}
                   fill
+                  sizes="(max-width: 640px) calc(100vw - 2rem), (max-width: 1024px) calc(100vw - 3rem), 896px"
                   className="object-contain rounded-lg shadow-sm border border-slate-200 bg-white"
                 />
               </div>

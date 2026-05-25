@@ -4,16 +4,28 @@ import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Send, User, Bot, Loader2, ImageIcon, LogOut } from "lucide-react";
 import Image from "next/image";
-import { sendChatMessage } from "@/lib/api";
+import { sendChatMessageStream } from "@/lib/api";
 import type { ImageData } from "./ImageModal";
 
 const formatImagePath = (originalPath: string) => {
   if (!originalPath) return "";
-  const parts = originalPath.split('/database/images/');
+  const normalizedPath = originalPath.replace(/\\/g, "/");
+  const parts = normalizedPath.split("/database/images/");
   if (parts.length > 1) {
     return `/images/${parts[1]}`;
   }
-  return originalPath;
+  return normalizedPath;
+};
+
+const formatStreamingStatus = (status: string) => {
+  switch (status) {
+    case "retrieving":
+      return "Searching relevant materials...";
+    case "answering":
+      return "Generating answer...";
+    default:
+      return status ? `${status.charAt(0).toUpperCase()}${status.slice(1)}...` : "Thinking...";
+  }
 };
 
 interface Message {
@@ -39,6 +51,8 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
+  const [streamingStatus, setStreamingStatus] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -53,37 +67,84 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
+    const question = input.trim();
+    const messageId = Date.now().toString();
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: messageId,
       role: "user",
-      content: input.trim(),
+      content: question,
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    const botMessageId = `${messageId}-bot`;
+    const botPlaceholderMessage: Message = {
+      id: botMessageId,
+      role: "bot",
+      content: "",
+    };
+
+    setMessages((prev) => [...prev, userMessage, botPlaceholderMessage]);
     setInput("");
     setIsLoading(true);
+    setStreamingMessageId(botMessageId);
+    setStreamingStatus("retrieving");
 
     try {
-      const response = await sendChatMessage(userMessage.content);
-      
-      const botMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "bot",
-        content: response.answer,
-        images: response.images,
-      };
+      const response = await sendChatMessageStream(question, {
+        onStatus: (status) => {
+          setStreamingStatus(status);
+        },
+        onAnswerDelta: (delta) => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === botMessageId
+                ? { ...msg, content: `${msg.content}${delta}` }
+                : msg,
+            ),
+          );
+        },
+        onDone: (finalResponse) => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === botMessageId
+                ? {
+                    ...msg,
+                    content: finalResponse.answer,
+                    images: finalResponse.images,
+                  }
+                : msg,
+            ),
+          );
+        },
+      });
 
-      setMessages((prev) => [...prev, botMessage]);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === botMessageId
+            ? {
+                ...msg,
+                content: response.answer,
+                images: response.images,
+              }
+            : msg,
+        ),
+      );
     } catch (error) {
       console.error(error);
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "bot",
-        content: "Sorry, I encountered an error while processing your request.",
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === botMessageId
+            ? {
+                ...msg,
+                content: "Sorry, I encountered an error while processing your request.",
+                images: [],
+              }
+            : msg,
+        ),
+      );
     } finally {
       setIsLoading(false);
+      setStreamingMessageId(null);
+      setStreamingStatus("");
     }
   };
 
@@ -133,11 +194,32 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
                   ? "bg-blue-600 text-white rounded-tr-sm shadow-md" 
                   : "bg-white text-slate-800 rounded-tl-sm shadow-sm border border-slate-200"
               }`}>
-                <div className="whitespace-pre-wrap leading-relaxed text-sm sm:text-base">
-                  {/* Basic markdown rendering for bold text and line breaks */}
-                  {msg.content.split('**').map((part, i) => i % 2 === 1 ? <strong key={i} className={msg.role === "user" ? "text-white" : "text-emerald-700"}>{part}</strong> : part)}
-                </div>
+                {msg.id === streamingMessageId && !msg.content ? (
+                  <div className="flex items-center gap-3 text-slate-500 text-sm font-medium">
+                    <Loader2 className="w-5 h-5 text-emerald-500 animate-spin" />
+                    <span>{formatStreamingStatus(streamingStatus)}</span>
+                  </div>
+                ) : (
+                  <div className="whitespace-pre-wrap leading-relaxed text-sm sm:text-base">
+                    {/* Basic markdown rendering for bold text and line breaks */}
+                    {msg.content.split("**").map((part, i) =>
+                      i % 2 === 1 ? (
+                        <strong key={i} className={msg.role === "user" ? "text-white" : "text-emerald-700"}>
+                          {part}
+                        </strong>
+                      ) : (
+                        part
+                      ),
+                    )}
+                  </div>
+                )}
               </div>
+
+              {msg.id === streamingMessageId && msg.content && (
+                <div className="mt-2 px-1 text-xs font-medium text-emerald-600">
+                  {formatStreamingStatus(streamingStatus || "answering")}
+                </div>
+              )}
 
               {/* Images Grid */}
               {msg.images && msg.images.length > 0 && (
@@ -152,6 +234,7 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
                         src={formatImagePath(img.image_path)} 
                         alt="attachment" 
                         fill
+                        sizes="128px"
                         className="object-cover opacity-90 group-hover:opacity-100 transition-opacity"
                       />
                       <div className="absolute inset-0 bg-slate-900/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
@@ -164,22 +247,6 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
             </div>
           </motion.div>
         ))}
-
-        {isLoading && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex gap-4 flex-row"
-          >
-            <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center shrink-0 mt-1 shadow-sm">
-              <Bot className="w-5 h-5 text-white" />
-            </div>
-            <div className="px-5 py-3.5 rounded-2xl bg-white rounded-tl-sm border border-slate-200 shadow-sm flex items-center gap-3">
-              <Loader2 className="w-5 h-5 text-emerald-500 animate-spin" />
-              <span className="text-slate-500 text-sm font-medium">Thinking...</span>
-            </div>
-          </motion.div>
-        )}
         <div ref={messagesEndRef} />
       </div>
 
