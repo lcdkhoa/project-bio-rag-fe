@@ -33,10 +33,10 @@ export default function Login({ onLogin }: LoginProps) {
             <Dna className="w-8 h-8 text-emerald-600" />
           </div>
           <h1 className="text-2xl font-bold text-slate-900 text-center">
-            Biology RAG Assistant
+            Trợ lý Khoa học tự nhiên
           </h1>
           <p className="text-slate-500 mt-2 text-center text-sm">
-            Enter your name to start exploring the biological knowledge base.
+            Nhập tên của em để bắt đầu tra cứu kho tri thức 12 cuốn sách giáo khoa Khoa học tự nhiên lớp 6-9.
           </p>
         </div>
 
@@ -46,7 +46,7 @@ export default function Login({ onLogin }: LoginProps) {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Your name..."
+              placeholder="Tên của em..."
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 transition-all"
               autoFocus
             />
@@ -56,7 +56,7 @@ export default function Login({ onLogin }: LoginProps) {
             disabled={!name.trim()}
             className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-200 disabled:text-slate-400 text-white font-medium rounded-xl px-4 py-3 flex items-center justify-center gap-2 transition-all shadow-md hover:shadow-lg disabled:shadow-none group"
           >
-            <span>Start Chatting</span>
+            <span>Bắt đầu hỏi</span>
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </button>
         </form>

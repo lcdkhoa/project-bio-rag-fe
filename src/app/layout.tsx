@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import "katex/dist/katex.min.css";
 import "./globals.css";
 
 const inter = Inter({
@@ -8,8 +9,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Biology RAG Chatbot",
-  description: "AI-powered Biology assistant",
+  title: "Trợ lý Khoa học tự nhiên THCS",
+  description:
+    "Trợ lý ảo RAG đa phương thức trả lời dựa trên 12 cuốn SGK Khoa học tự nhiên lớp 6-9, kèm trích dẫn đúng trang sách.",
 };
 
 export default function RootLayout({
@@ -18,7 +20,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} h-full antialiased`}>
+    <html lang="vi" className={`${inter.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

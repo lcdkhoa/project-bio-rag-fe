@@ -4,28 +4,29 @@ import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Send, User, Bot, Loader2, ImageIcon, LogOut } from "lucide-react";
 import Image from "next/image";
-import { sendChatMessageStream } from "@/lib/api";
+import { resolveImageUrl, sendChatMessageStream } from "@/lib/api";
+import type { Citation } from "@/lib/api";
 import type { ImageData } from "./ImageModal";
-
-const formatImagePath = (originalPath: string) => {
-  if (!originalPath) return "";
-  const normalizedPath = originalPath.replace(/\\/g, "/");
-  const parts = normalizedPath.split("/database/images/");
-  if (parts.length > 1) {
-    return `/images/${parts[1]}`;
-  }
-  return normalizedPath;
-};
+import Citations from "./Citations";
+import RichText from "./RichText";
 
 const formatStreamingStatus = (status: string) => {
   switch (status) {
     case "retrieving":
-      return "Searching relevant materials...";
+      return "Đang tìm trong sách giáo khoa...";
     case "answering":
-      return "Generating answer...";
+      return "Đang soạn câu trả lời...";
     default:
-      return status ? `${status.charAt(0).toUpperCase()}${status.slice(1)}...` : "Thinking...";
+      return status ? `${status}...` : "Đang xử lý...";
   }
+};
+
+/** Chú thích ngắn dưới mỗi hình: nhãn hình + sách + trang, dựng từ trường máy chủ trả về. */
+const imageCaption = (image: ImageData) => {
+  const head = [image.figure_label, image.book].filter(Boolean).join(" · ");
+  const page =
+    image.page !== undefined && image.page !== "" ? `tr. ${image.page}` : "";
+  return [head, page].filter(Boolean).join(" — ") || image.label || "";
 };
 
 interface Message {
@@ -33,6 +34,7 @@ interface Message {
   role: "user" | "bot";
   content: string;
   images?: ImageData[];
+  citations?: Citation[];
 }
 
 interface ChatInterfaceProps {
@@ -46,7 +48,7 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
     {
       id: "welcome",
       role: "bot",
-      content: `Hello **${userName}**! I am your Biology RAG Assistant. Ask me anything about biology!`,
+      content: `Chào **${userName}**! Mình là trợ lý Khoa học tự nhiên THCS, trả lời dựa trên 12 cuốn sách giáo khoa lớp 6-9 của ba bộ sách. Hỏi mình về Vật lí, Hoá học hay Sinh học nhé.`,
     }
   ]);
   const [input, setInput] = useState("");
@@ -108,8 +110,11 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
               msg.id === botMessageId
                 ? {
                     ...msg,
-                    content: finalResponse.answer,
+                    // `answer_text` la cau tra loi KHONG kem khoi nguon dang chu,
+                    // vi nguon duoc ve rieng ben duoi bang <Citations />.
+                    content: finalResponse.answer_text ?? finalResponse.answer,
                     images: finalResponse.images,
+                    citations: finalResponse.citations,
                   }
                 : msg,
             ),
@@ -122,8 +127,9 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
           msg.id === botMessageId
             ? {
                 ...msg,
-                content: response.answer,
+                content: response.answer_text ?? response.answer,
                 images: response.images,
+                citations: response.citations,
               }
             : msg,
         ),
@@ -135,8 +141,10 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
           msg.id === botMessageId
             ? {
                 ...msg,
-                content: "Sorry, I encountered an error while processing your request.",
+                content:
+                  "Xin lỗi, đã xảy ra lỗi khi xử lý câu hỏi. Kiểm tra xem máy chủ đã chạy chưa rồi thử lại.",
                 images: [],
+                citations: [],
               }
             : msg,
         ),
@@ -157,10 +165,10 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
             <Bot className="w-6 h-6 text-emerald-600" />
           </div>
           <div>
-            <h2 className="text-slate-900 font-semibold">Biology Assistant</h2>
+            <h2 className="text-slate-900 font-semibold">Trợ lý Khoa học tự nhiên</h2>
             <p className="text-xs text-emerald-600 flex items-center gap-1 font-medium">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              Online
+              Trực tuyến · SGK lớp 6-9, ba bộ sách
             </p>
           </div>
         </div>
@@ -169,7 +177,7 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
           className="text-slate-500 hover:text-slate-900 p-2 rounded-lg hover:bg-slate-100 transition-colors flex items-center gap-2 text-sm font-medium"
         >
           <LogOut className="w-4 h-4" />
-          <span className="hidden sm:inline">Logout</span>
+          <span className="hidden sm:inline">Đăng xuất</span>
         </button>
       </header>
 
@@ -200,18 +208,10 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
                     <span>{formatStreamingStatus(streamingStatus)}</span>
                   </div>
                 ) : (
-                  <div className="whitespace-pre-wrap leading-relaxed text-sm sm:text-base">
-                    {/* Basic markdown rendering for bold text and line breaks */}
-                    {msg.content.split("**").map((part, i) =>
-                      i % 2 === 1 ? (
-                        <strong key={i} className={msg.role === "user" ? "text-white" : "text-emerald-700"}>
-                          {part}
-                        </strong>
-                      ) : (
-                        part
-                      ),
-                    )}
-                  </div>
+                  <RichText
+                    content={msg.content}
+                    variant={msg.role === "user" ? "user" : "bot"}
+                  />
                 )}
               </div>
 
@@ -221,24 +221,38 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
                 </div>
               )}
 
-              {/* Images Grid */}
+              {/* Nguồn trích dẫn — xác định, không do mô hình sinh */}
+              {msg.role === "bot" && <Citations citations={msg.citations} />}
+
+              {/* Hình minh hoạ, tải thẳng từ máy chủ */}
               {msg.images && msg.images.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {msg.images.map((img, i) => (
                     <button
                       key={i}
                       onClick={() => onImageClick(img)}
-                      className="relative group w-32 h-32 rounded-xl overflow-hidden border border-slate-200 hover:border-emerald-500 transition-colors bg-slate-50 flex-shrink-0 shadow-sm"
+                      title={imageCaption(img)}
+                      className="group w-36 rounded-xl overflow-hidden border border-slate-200 hover:border-emerald-500 transition-colors bg-white flex-shrink-0 shadow-sm text-left"
                     >
-                      <Image 
-                        src={formatImagePath(img.image_path)} 
-                        alt="attachment" 
-                        fill
-                        sizes="128px"
-                        className="object-cover opacity-90 group-hover:opacity-100 transition-opacity"
-                      />
-                      <div className="absolute inset-0 bg-slate-900/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <ImageIcon className="w-6 h-6 text-white drop-shadow-md" />
+                      <div className="relative w-full h-28 bg-slate-50">
+                        <Image
+                          src={resolveImageUrl(img)}
+                          alt={imageCaption(img) || "Hình minh hoạ từ sách giáo khoa"}
+                          fill
+                          sizes="144px"
+                          // Ảnh do máy chủ RAG phục vụ ở một origin đổi theo môi
+                          // trường (cục bộ / Colab / tunnel), nên không khai báo
+                          // trước được trong `remotePatterns`. `unoptimized` bỏ
+                          // qua bộ tối ưu của Next và lấy thẳng URL.
+                          unoptimized
+                          className="object-contain p-1 opacity-95 group-hover:opacity-100 transition-opacity"
+                        />
+                        <div className="absolute inset-0 bg-slate-900/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <ImageIcon className="w-6 h-6 text-white drop-shadow-md" />
+                        </div>
+                      </div>
+                      <div className="px-2 py-1.5 text-[10px] leading-tight text-slate-500 border-t border-slate-100 line-clamp-2">
+                        {imageCaption(img)}
                       </div>
                     </button>
                   ))}
@@ -265,7 +279,7 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
                 handleSubmit(e);
               }
             }}
-            placeholder="Ask about biology... (Press Enter to send)"
+            placeholder="Hỏi về Vật lí, Hoá học, Sinh học... (Enter để gửi)"
             className="w-full max-h-32 min-h-[44px] bg-transparent border-none text-slate-900 placeholder-slate-400 focus:ring-0 resize-none py-2.5 px-4 scrollbar-thin scrollbar-thumb-slate-300 outline-none"
             rows={1}
             style={{
@@ -281,7 +295,7 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
           </button>
         </form>
         <div className="text-center mt-2">
-          <p className="text-[10px] text-slate-400">AI can make mistakes. Verify important biological information.</p>
+          <p className="text-[10px] text-slate-400">AI có thể trả lời sai. Hãy đối chiếu với trang sách được trích dẫn ở trên.</p>
         </div>
       </div>
     </div>
