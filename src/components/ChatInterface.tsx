@@ -2,13 +2,14 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Send, User, Bot, Loader2, ImageIcon, LogOut } from "lucide-react";
+import { Send, User, Bot, Loader2, ImageIcon, LogOut, Server } from "lucide-react";
 import Image from "next/image";
 import { resolveImageUrl, sendChatMessageStream } from "@/lib/api";
 import type { Citation } from "@/lib/api";
 import type { ImageData } from "./ImageModal";
 import Citations from "./Citations";
 import RichText from "./RichText";
+import { useStoredApiHost } from "@/lib/useStoredApiHost";
 
 const formatStreamingStatus = (status: string) => {
   switch (status) {
@@ -41,9 +42,16 @@ interface ChatInterfaceProps {
   userName: string;
   onImageClick: (image: ImageData) => void;
   onLogout: () => void;
+  onOpenSettings?: () => void;
 }
 
-export default function ChatInterface({ userName, onImageClick, onLogout }: ChatInterfaceProps) {
+export default function ChatInterface({
+  userName,
+  onImageClick,
+  onLogout,
+  onOpenSettings,
+}: ChatInterfaceProps) {
+  const { isCustom, apiHost } = useStoredApiHost();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
@@ -172,13 +180,32 @@ export default function ChatInterface({ userName, onImageClick, onLogout }: Chat
             </p>
           </div>
         </div>
-        <button 
-          onClick={onLogout}
-          className="text-slate-500 hover:text-slate-900 p-2 rounded-lg hover:bg-slate-100 transition-colors flex items-center gap-2 text-sm font-medium"
-        >
-          <LogOut className="w-4 h-4" />
-          <span className="hidden sm:inline">Đăng xuất</span>
-        </button>
+        <div className="flex items-center gap-1 sm:gap-2">
+          {onOpenSettings && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="text-slate-600 hover:text-slate-900 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors flex items-center gap-1.5 text-xs sm:text-sm font-medium"
+              title={`Cấu hình máy chủ API (Đang dùng: ${apiHost})`}
+            >
+              <Server className="w-4 h-4 text-slate-500" />
+              <span className="hidden sm:inline">Máy chủ</span>
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  isCustom ? "bg-amber-500" : "bg-emerald-500"
+                }`}
+                title={isCustom ? "Máy chủ tùy chỉnh" : "Máy chủ mặc định"}
+              />
+            </button>
+          )}
+          <button 
+            onClick={onLogout}
+            className="text-slate-500 hover:text-slate-900 p-2 rounded-lg hover:bg-slate-100 transition-colors flex items-center gap-2 text-sm font-medium"
+          >
+            <LogOut className="w-4 h-4" />
+            <span className="hidden sm:inline">Đăng xuất</span>
+          </button>
+        </div>
       </header>
 
       {/* Messages */}

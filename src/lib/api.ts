@@ -1,16 +1,171 @@
 /**
- * Địa chỉ máy chủ đọc từ biến môi trường, KHÔNG ghi cứng.
+ * Quản lý địa chỉ máy chủ API (API Host).
  *
- * Trước đây file này ghi cứng địa chỉ và đổi bằng cách comment dòng này bỏ dòng
- * kia — trong khi `.env` đã có sẵn `NEXT_PUBLIC_API_HOST` mà không ai đọc. Hậu
- * quả: muốn trỏ sang máy chủ khác (Colab, cloudflared, máy cục bộ) phải sửa mã
- * nguồn rồi build lại.
+ * Thứ tự ưu tiên:
+ * 1. URL tùy chỉnh do người dùng nhập trên FE (lưu trong `localStorage`)
+ * 2. Biến môi trường `NEXT_PUBLIC_API_HOST`
+ * 3. URL dự phòng mặc định (Cloudflare tunnel / máy cục bộ)
  *
- * Bỏ dấu `/` ở cuối để `${API_HOST}/api/chat` không thành `//api/chat`.
+ * Bỏ dấu `/` ở cuối để `${host}/api/chat` không thành `//api/chat`.
  */
-export const API_HOST = (
-  process.env.NEXT_PUBLIC_API_HOST ?? "http://localhost:5000"
+export const DEFAULT_API_HOST = (
+  process.env.NEXT_PUBLIC_API_HOST ||
+  "https://styles-peak-commissions-pacific.trycloudflare.com"
 ).replace(/\/+$/, "");
+
+export const STORAGE_KEY_API_HOST = "rag_api_host";
+
+const hostListeners = new Set<() => void>();
+
+export function subscribeApiHost(listener: () => void) {
+  hostListeners.add(listener);
+  if (typeof window !== "undefined") {
+    window.addEventListener("storage", listener);
+  }
+  return () => {
+    hostListeners.delete(listener);
+    if (typeof window !== "undefined") {
+      window.removeEventListener("storage", listener);
+    }
+  };
+}
+
+export function emitApiHostChange() {
+  hostListeners.forEach((listener) => {
+    try {
+      listener();
+    } catch {
+      // ignore
+    }
+  });
+}
+
+/**
+ * Lấy URL tùy chỉnh người dùng đã lưu trong localStorage (nếu có).
+ */
+export function getCustomApiHost(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY_API_HOST);
+    return stored && stored.trim() ? stored.trim().replace(/\/+$/, "") : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lấy URL máy chủ đang áp dụng (ưu tiên override > custom lưu trong FE > DEFAULT).
+ */
+export function getApiHost(hostOverride?: string): string {
+  if (hostOverride && hostOverride.trim()) {
+    return hostOverride.trim().replace(/\/+$/, "");
+  }
+  const custom = getCustomApiHost();
+  if (custom) {
+    return custom;
+  }
+  return DEFAULT_API_HOST;
+}
+
+/**
+ * Lưu URL máy chủ do người dùng nhập từ FE vào localStorage.
+ */
+export function setCustomApiHost(host: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const cleanHost = host.trim().replace(/\/+$/, "");
+    if (cleanHost) {
+      localStorage.setItem(STORAGE_KEY_API_HOST, cleanHost);
+    } else {
+      localStorage.removeItem(STORAGE_KEY_API_HOST);
+    }
+  } catch {
+    // ignore
+  }
+  emitApiHostChange();
+}
+
+/**
+ * Xoá URL tùy chỉnh, khôi phục về mặc định.
+ */
+export function resetCustomApiHost(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(STORAGE_KEY_API_HOST);
+  } catch {
+    // ignore
+  }
+  emitApiHostChange();
+}
+
+/**
+ * Kiểm tra xem người dùng có đang dùng URL tùy chỉnh hay không.
+ */
+export function isCustomApiHostSet(): boolean {
+  return getCustomApiHost() !== null;
+}
+
+/**
+ * Kiểm tra kết nối tới máy chủ API.
+ */
+export async function checkApiHealth(
+  targetHost?: string,
+): Promise<{ ok: boolean; message: string; latencyMs?: number }> {
+  const host = (targetHost || getApiHost()).replace(/\/+$/, "");
+  if (!host) {
+    return { ok: false, message: "Địa chỉ máy chủ trống." };
+  }
+
+  const start = performance.now();
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+    const response = await fetch(`${host}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: "" }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    const latencyMs = Math.round(performance.now() - start);
+
+    if (response.ok || response.status === 400 || response.status === 422) {
+      return {
+        ok: true,
+        message: `Kết nối thành công (${latencyMs}ms)`,
+        latencyMs,
+      };
+    }
+
+    return {
+      ok: false,
+      message: `Máy chủ phản hồi mã ${response.status}: ${response.statusText}`,
+      latencyMs,
+    };
+  } catch (error: unknown) {
+    const latencyMs = Math.round(performance.now() - start);
+    const err = error as Error;
+    if (err?.name === "AbortError") {
+      return { ok: false, message: "Kết nối quá thời gian chờ (hết 6 giây)." };
+    }
+    return {
+      ok: false,
+      message:
+        err?.message ||
+        "Không thể kết nối đến máy chủ. Kiểm tra lại địa chỉ hoặc xem máy chủ đã bật chưa.",
+      latencyMs,
+    };
+  }
+}
+
+/**
+ * Hằng số giữ lại để tương thích ngược.
+ */
+export const API_HOST = DEFAULT_API_HOST;
+
 
 export interface ChatImage {
   image_path: string;
@@ -59,7 +214,10 @@ export interface ChatResponse {
  * Vẫn xử lý được dạng cũ (đường dẫn tuyệt đối của máy đã chạy ETL), để frontend
  * không phụ thuộc vào việc máy chủ đã cập nhật hay chưa.
  */
-export function resolveImageUrl(image: ChatImage | null | undefined): string {
+export function resolveImageUrl(
+  image: ChatImage | null | undefined,
+  hostOverride?: string,
+): string {
   if (!image) return "";
   const raw = (image.image_url || image.image_path || "").trim();
   if (!raw) return "";
@@ -71,7 +229,8 @@ export function resolveImageUrl(image: ChatImage | null | undefined): string {
     ? `/images/${normalized.split(marker)[1]}`
     : normalized;
 
-  return `${API_HOST}${relative.startsWith("/") ? "" : "/"}${relative}`;
+  const host = getApiHost(hostOverride);
+  return `${host}${relative.startsWith("/") ? "" : "/"}${relative}`;
 }
 
 export interface ChatStreamHandlers {
@@ -187,8 +346,12 @@ function toChatResponse(payload: unknown, fallbackAnswer = ""): ChatResponse {
   };
 }
 
-export async function sendChatMessage(question: string): Promise<ChatResponse> {
-  const response = await fetch(`${API_HOST}/api/chat`, {
+export async function sendChatMessage(
+  question: string,
+  hostOverride?: string,
+): Promise<ChatResponse> {
+  const host = getApiHost(hostOverride);
+  const response = await fetch(`${host}/api/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -206,8 +369,10 @@ export async function sendChatMessage(question: string): Promise<ChatResponse> {
 export async function sendChatMessageStream(
   question: string,
   handlers: ChatStreamHandlers = {},
+  hostOverride?: string,
 ): Promise<ChatResponse> {
-  const response = await fetch(`${API_HOST}/api/chat/stream`, {
+  const host = getApiHost(hostOverride);
+  const response = await fetch(`${host}/api/chat/stream`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
